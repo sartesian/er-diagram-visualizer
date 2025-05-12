@@ -15,7 +15,7 @@
 
 ## Установка
 
-1. **Склонируйте репозиторий** (или загрузите файлы вручную):
+1. **Склонируйте репозиторий или загрузите релиз**:
    ```bash
    git clone https://github.com/ваш_пользователь/er-diagram-visualizer.git
    cd er-diagram-visualizer
