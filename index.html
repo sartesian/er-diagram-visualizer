@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Database Visualizer</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { 
+      margin: 0; 
+      padding: 0; 
+      overflow: hidden; 
+      height: 100vh; 
+      font-family: sans-serif; 
+      background: #0D1117; 
+      color: #C9D1D9; 
+    }
+    .app-container { display: flex; height: 100%; }
+    .sidebar { 
+      width: 200px; 
+      padding: 10px; 
+      background: #161B22; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 10px; 
+      box-shadow: 0 0 10px rgba(88, 166, 255, 0.3); 
+    }
+    .sidebar button { 
+      padding: 8px; 
+      border: none; 
+      border-radius: 4px; 
+      cursor: pointer; 
+      background: #21262D; 
+      color: #C9D1D9; 
+    }
+    .sidebar button.active { 
+      background: #58A6FF; 
+      color: #0D1117; 
+    }
+    .sidebar .add-db-btn { 
+      background: #238636; 
+      color: #C9D1D9; 
+    }
+    .sidebar .delete-db-btn { 
+      background: #DA3633; 
+      color: #C9D1D9; 
+      margin-left: 5px; 
+      padding: 4px 8px; 
+    }
+    .main-content { flex: 1; padding: 10px; }
+    .header { display: flex; gap: 10px; margin-bottom: 10px; }
+    .search-input { 
+      flex: 1; 
+      padding: 8px; 
+      border: 1px solid #30363D; 
+      border-radius: 4px; 
+      background: #0D1117; 
+      color: #C9D1D9; 
+      box-shadow: 0 0 8px rgba(88, 166, 255, 0.2); 
+    }
+    .svg-container { width: 100%; height: 90%; }
+    .svg-container svg { width: 100%; height: 100%; }
+    .table rect { 
+      fill: #161B22; 
+      stroke: #30363D; 
+      stroke-width: 1; 
+      filter: drop-shadow(0 0 5px rgba(88, 166, 255, 0.3)); 
+    }
+    .table text { 
+      font-size: 12px; 
+      fill: #C9D1D9; 
+      dominant-baseline: middle; 
+    }
+    .table-title { 
+      font-weight: bold; 
+      font-size: 13px; 
+    }
+    .field { fill: #C9D1D9; }
+    .pk { 
+      font-weight: bold; 
+      fill: #FF7B72; 
+    }
+    .fk { 
+      font-style: italic; 
+      fill: #79C0FF; 
+    }
+    .type { 
+      fill: #8B949E; 
+      font-size: 11px; 
+    }
+    .divider { 
+      stroke: #30363D; 
+      stroke-width: 1px; 
+    }
+    .link { 
+      stroke: #8B949E; 
+      stroke-width: 1.5px; 
+      fill: none; 
+      filter: drop-shadow(0 0 3px rgba(88, 166, 255, 0.2)); 
+    }
+    .highlight { 
+      stroke: #F0F6FC; 
+      stroke-width: 2; 
+    }
+    .modal { 
+      display: none; 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      background: rgba(13, 17, 23, 0.8); 
+      justify-content: center; 
+      align-items: center; 
+    }
+    .modal.active { display: flex; }
+    .modal-content { 
+      background: #161B22; 
+      padding: 20px; 
+      border-radius: 8px; 
+      width: 350px; 
+      box-shadow: 0 0 15px rgba(88, 166, 255, 0.4); 
+    }
+    .modal-content input { 
+      width: 100%; 
+      margin-bottom: 12px; 
+      padding: 8px; 
+      border: 1px solid #30363D; 
+      border-radius: 4px; 
+      background: #0D1117; 
+      color: #C9D1D9; 
+    }
+    .modal-content button { 
+      padding: 8px 16px; 
+      border: none; 
+      border-radius: 4px; 
+      cursor: pointer; 
+    }
+    .modal-content .btn-primary { 
+      background: #58A6FF; 
+      color: #0D1117; 
+    }
+    .modal-content .btn-outline { 
+      background: transparent; 
+      border: 1px solid #58A6FF; 
+      color: #58A6FF; 
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="sidebar" id="sidebar">
+      <button class="add-db-btn" id="addDbBtn">Add Database</button>
+      <div id="dbList"></div>
+    </div>
+    <div class="main-content">
+      <div class="header">
+        <input type="text" class="search-input" id="searchInput" placeholder="Search tables or relations">
+        <button id="saveStateBtn">Save State</button>
+      </div>
+      <div class="svg-container"><svg></svg></div>
+    </div>
+  </div>
+  <div class="modal" id="addDbModal">
+    <div class="modal-content">
+      <h3>Add Database</h3>
+      <input type="text" id="dbName" placeholder="Enter database name">
+      <input type="text" id="dbUrl" placeholder="Enter database URL (e.g., localhost:5432/db)">
+      <input type="text" id="dbUser" placeholder="Enter username">
+      <input type="password" id="dbPass" placeholder="Enter password">
+      <button class="btn-primary" id="saveDbBtn">Save</button>
+      <button class="btn-outline" id="closeModalBtn">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const fs = require('fs');
+    const path = require('path');
+    const svg = d3.select("svg");
+    const linkLayer = svg.append("g");
+    const tableLayer = svg.append("g");
+    const fieldHeight = 20;
+    const RELATION_SPACING = 20;
+    const padding = 10;
+    const tableMap = new Map();
+    let databases = JSON.parse(localStorage.getItem('databases')) || [];
+    let sessionData = {};
+    let activeDb = null;
+
+
+    const zoom = d3.zoom().scaleExtent([0.1, 10]).on("zoom", (event) => {
+      linkLayer.attr("transform", event.transform);
+      tableLayer.attr("transform", event.transform);
+    });
+    svg.call(zoom);
+
+    const addDbModal = document.getElementById('addDbModal');
+    const dbList = document.getElementById('dbList');
+    const searchInput = document.getElementById('searchInput');
+
+    document.getElementById('addDbBtn').addEventListener('click', () => addDbModal.classList.add('active'));
+    document.getElementById('closeModalBtn').addEventListener('click', () => addDbModal.classList.remove('active'));
+
+    document.getElementById('saveDbBtn').addEventListener('click', () => {
+      const name = document.getElementById('dbName').value;
+      const url = document.getElementById('dbUrl').value;
+      const user = document.getElementById('dbUser').value;
+      const pass = document.getElementById('dbPass').value;
+      if (name && url && user && pass) {
+        const [hostPort, database] = url.split('/');
+        const [host, port] = hostPort.split(':');
+        const dbConfig = { name, host, port, database, user, password: pass };
+        databases.push(dbConfig);
+        localStorage.setItem('databases', JSON.stringify(databases));
+        connectToDatabase(dbConfig);
+        updateDbList();
+        addDbModal.classList.remove('active');
+      } else {
+        alert('Please fill in all fields.');
+      }
+    });
+
+    document.getElementById('saveStateBtn').addEventListener('click', () => {
+      if (activeDb) {
+        const state = sessionData[activeDb];
+        state.tables.forEach(table => {
+          const tableData = tableMap.get(table.name);
+          if (tableData) {
+            table.x = tableData.x;
+            table.y = tableData.y;
+          }
+        });
+        localStorage.setItem(`state_${activeDb}`, JSON.stringify(state));
+        alert('State saved successfully.');
+      }
+    });
+
+    searchInput.addEventListener('input', (e) => {
+      const term = e.target.value.toLowerCase();
+      tableLayer.selectAll(".table").each(function(d) {
+        const tableName = d.name.toLowerCase();
+        d3.select(this).select("rect").classed("highlight", tableName.includes(term));
+      });
+      linkLayer.selectAll("path").each(function(d) {
+        const from = d.from.toLowerCase();
+        const to = d.to.toLowerCase();
+        d3.select(this).classed("highlight", from.includes(term) || to.includes(term));
+      });
+    });
+
+    function updateDbList() {
+      dbList.innerHTML = '';
+      databases.forEach(db => {
+        const div = document.createElement('div');
+        const btn = document.createElement('button');
+        btn.textContent = db.name;
+        btn.addEventListener('click', () => {
+          activeDb = db.name;
+          document.querySelectorAll('.sidebar button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          renderDiagram(db.name);
+        });
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'X';
+        deleteBtn.className = 'delete-db-btn';
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete database ${db.name}?`)) {
+            databases = databases.filter(d => d.name !== db.name);
+            localStorage.setItem('databases', JSON.stringify(databases));
+            delete sessionData[db.name];
+            localStorage.removeItem(`state_${db.name}`);
+            if (activeDb === db.name) {
+              activeDb = null;
+              tableLayer.selectAll("*").remove();
+              linkLayer.selectAll("*").remove();
+            }
+            updateDbList();
+            if (databases.length > 0 && !activeDb) {
+              activeDb = databases[0].name;
+              renderDiagram(activeDb);
+            }
+          }
+        });
+        div.appendChild(btn);
+        div.appendChild(deleteBtn);
+        dbList.appendChild(div);
+      });
+      if (databases.length > 0 && !activeDb) {
+        activeDb = databases[0].name;
+        dbList.querySelector('button').classList.add('active');
+        renderDiagram(activeDb);
+      }
+    }
+
+    function connectToDatabase(dbConfig) {
+      ipcRenderer.send('generate-json', dbConfig);
+    }
+
+    ipcRenderer.on('json-generated', (event, data) => {
+      const filePath = path.normalize(data.filePath);
+      try {
+        const jsonData = fs.readFileSync(filePath, 'utf8');
+        const json = JSON.parse(jsonData);
+        if (!json.tables) throw new Error('Tables not defined in JSON data');
+        sessionData[data.dbName] = json;
+        if (activeDb === data.dbName) renderDiagram(data.dbName);
+      } catch (error) {
+        alert("Failed to load schema: " + error.message);
+      }
+    });
+
+    ipcRenderer.on('json-error', (event, error) => {
+      alert("Error: " + error);
+    });
+
+    function doesCurveIntersectTable(tables, midX, midY, excludeTables) {
+      return tables.some(table => {
+        if (excludeTables.includes(table.name)) return false;
+        const tableWidth = tableMap.get(table.name).width;
+        const tableHeight = (table.fields.length + 1) * fieldHeight;
+        return midX >= table.x && midX <= table.x + tableWidth && midY >= table.y && midY <= table.y + tableHeight;
+      });
+    }
+
+    function redrawSide(p1, p2, x) {
+      return `M ${p1[0]},${p1[1]} C ${x},${p1[1]} ${x},${p2[1]} ${p2[0]},${p2[1]}`;
+    }
+
+    function draw(tables, relations) {
+      linkLayer.selectAll("path").remove();
+      if (!tables || !relations) return;
+      relations.forEach(rel => {
+        const [fromTable, fromField] = rel.from.split(".");
+        const [toTable, toField] = rel.to.split(".");
+        const fromFieldPos = tableMap.get(fromTable)?.fields[fromField];
+        const toFieldPos = tableMap.get(toTable)?.fields[toField];
+        if (!fromFieldPos || !toFieldPos) return;
+
+        const fromTableData = tables.find(t => t.name === fromTable);
+        const toTableData = tables.find(t => t.name === toTable);
+        const fromTableWidth = tableMap.get(fromTable).width;
+        const toTableWidth = tableMap.get(toTable).width;
+
+        let p1 = [fromFieldPos.x + fromTableWidth, fromFieldPos.y];
+        let p2 = [toFieldPos.x, toFieldPos.y];
+        const midX = (p1[0] + p2[0]) / 2;
+        const midY = (p1[1] + p2[1]) / 2;
+
+        let intersects = doesCurveIntersectTable(tables, midX, midY, [fromTable, toTable]);
+        let pathData;
+
+        if (intersects || p1[0] >= p2[0]) {
+          const r1 = fromTableData.x + fromTableWidth;
+          const l2 = toTableData.x;
+          const r2 = toTableData.x + toTableWidth;
+          const l1 = fromTableData.x;
+
+          if (r1 < l2) {
+            p1 = [r1, fromFieldPos.y];
+            p2 = [l2, toFieldPos.y];
+          } else if (r2 < l1) {
+            p1 = [r2, toFieldPos.y];
+            p2 = [l1, fromFieldPos.y];
+          } else {
+            if (Math.abs(l1 - l2) < Math.abs(r1 - r2)) {
+              p1 = [l1, fromFieldPos.y];
+              p2 = [l2, toFieldPos.y];
+              pathData = redrawSide(p1, p2, Math.min(l1, l2) - RELATION_SPACING);
+            } else {
+              p1 = [r1, fromFieldPos.y];
+              p2 = [r2, toFieldPos.y];
+              pathData = redrawSide(p1, p2, Math.max(r1, r2) + RELATION_SPACING);
+            }
+          }
+        }
+
+        if (!pathData) {
+          const half = Math.floor((p2[0] - p1[0]) / 2);
+          pathData = `M ${p1[0]},${p1[1]} C ${p1[0] + half},${p1[1]} ${p2[0] - half},${p2[1]} ${p2[0]},${p2[1]}`;
+        }
+
+        linkLayer.append("path").attr("class", "link").attr("d", pathData);
+      });
+    }
+
+    function renderDiagram(dbName) {
+      const data = sessionData[dbName];
+      const savedState = JSON.parse(localStorage.getItem(`state_${dbName}`)) || data;
+      if (!savedState || !savedState.tables) return;
+
+      tableLayer.selectAll(".table").remove();
+      linkLayer.selectAll("path").remove();
+      tableMap.clear();
+
+      const tables = savedState.tables.map((table, i) => ({
+        ...table,
+        x: table.x || (i % 5) * 300 + 100,
+        y: table.y || Math.floor(i / 5) * 400 + 100,
+        color: getRandomColor(),
+      }));
+
+      const relations = savedState.relations || [];
+      const validRelations = relations.filter(rel => {
+        const [fromTable, fromField] = rel.from.split(".");
+        const [toTable, toField] = rel.to.split(".");
+        const fromExists = tables.some(t => t.name === fromTable && t.fields.some(f => f.name === fromField));
+        const toExists = tables.some(t => t.name === toTable && t.fields.some(f => f.name === toField));
+        return fromExists && toExists;
+      });
+
+      const tableGroups = tableLayer.selectAll(".table")
+        .data(tables)
+        .enter()
+        .append("g")
+        .attr("class", "table")
+        .attr("transform", d => `translate(${d.x},${d.y})`)
+        .call(d3.drag()
+          .on("start", dragstarted)
+          .on("drag", dragged)
+          .on("end", dragended));
+
+      tableGroups.each(function(d) {
+        const g = d3.select(this);
+        const tempTitleText = g.append("text").attr("class", "table-title").style("visibility", "hidden").text(d.name);
+        const tempFieldText = g.append("text").attr("class", "field").style("visibility", "hidden");
+        const tempTypeText = g.append("text").attr("class", "type").style("visibility", "hidden");
+
+        const titleWidth = tempTitleText.node().getBBox().width;
+        let maxFieldWidth = 0;
+        let maxTypeWidth = 0;
+        d.fields.forEach(f => {
+          tempFieldText.text(f.name);
+          tempTypeText.text(f.dataType);
+          maxFieldWidth = Math.max(maxFieldWidth, tempFieldText.node().getBBox().width);
+          maxTypeWidth = Math.max(maxTypeWidth, tempTypeText.node().getBBox().width);
+        });
+
+        tempTitleText.remove();
+        tempFieldText.remove();
+        tempTypeText.remove();
+
+        const gap = 20;
+        const tableWidth = padding + maxFieldWidth + gap + maxTypeWidth + padding;
+        const tableHeight = (d.fields.length + 1) * fieldHeight;
+
+        tableMap.set(d.name, { x: d.x, y: d.y, width: tableWidth, fields: {} });
+
+        g.append("rect")
+          .attr("width", tableWidth)
+          .attr("height", tableHeight)
+          .attr("stroke", d.color)
+          .attr("stroke-width", 2);
+
+        g.append("text")
+          .attr("x", padding)
+          .attr("y", fieldHeight / 2)
+          .attr("class", "table-title")
+          .text(d.name);
+
+        g.append("line")
+          .attr("x1", 0)
+          .attr("y1", fieldHeight)
+          .attr("x2", tableWidth)
+          .attr("y2", fieldHeight)
+          .attr("class", "divider");
+
+        d.fields.forEach((f, i) => {
+          const fy = (i + 1) * fieldHeight + fieldHeight / 2;
+          g.append("text")
+            .attr("x", padding)
+            .attr("y", fy)
+            .attr("class", `field ${f.type === "PK" ? "pk" : f.type === "FK" ? "fk" : ""}`)
+            .text(f.name);
+
+          g.append("text")
+            .attr("x", padding + maxFieldWidth + gap)
+            .attr("y", fy)
+            .attr("class", "type")
+            .text(f.dataType);
+
+          if (i < d.fields.length - 1) {
+            g.append("line")
+              .attr("x1", 0)
+              .attr("y1", (i + 1) * fieldHeight + fieldHeight)
+              .attr("x2", tableWidth)
+              .attr("y2", (i + 1) * fieldHeight + fieldHeight)
+              .attr("class", "divider");
+          }
+
+          tableMap.get(d.name).fields[f.name] = { x: d.x, y: d.y + (i + 1) * fieldHeight + fieldHeight / 2 };
+        });
+      });
+
+      draw(tables, validRelations);
+    }
+
+    function dragstarted(event, d) {
+      d3.select(this).raise();
+    }
+
+    function dragged(event, d) {
+      d.x = event.x;
+      d.y = event.y;
+      d3.select(this).attr("transform", `translate(${d.x},${d.y})`);
+
+      const tableEntry = tableMap.get(d.name);
+      tableEntry.x = d.x;
+      tableEntry.y = d.y;
+      d.fields.forEach((f, i) => {
+        tableEntry.fields[f.name] = { x: d.x, y: d.y + (i + 1) * fieldHeight + fieldHeight / 2 };
+      });
+      tableMap.set(d.name, tableEntry);
+
+      if (activeDb && sessionData[activeDb]) {
+        const tables = sessionData[activeDb].tables.map(table => ({
+          ...table,
+          x: tableMap.get(table.name)?.x ?? table.x,
+          y: tableMap.get(table.name)?.y ?? table.y,
+          color: tableMap.get(table.name)?.color ?? table.color
+        }));
+        draw(tables, sessionData[activeDb].relations || []);
+      }
+    }
+
+    function dragended(event, d) {}
+
+    function getRandomColor() {
+      const colors = ["#58A6FF", "#FF7B72", "#F0F6FC", "#79C0FF", "#C3E6CB", "#D1BCFF", "#FF80CC", "#5EF2E8", "#C3E88D", "#FF9A9A", "#AFF5D2"];
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    databases.forEach(dbConfig => connectToDatabase(dbConfig));
+    updateDbList();
+  </script>
+</body>
+</html>
