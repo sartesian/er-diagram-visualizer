@@ -17,7 +17,7 @@
 
 1. **Склонируйте репозиторий или загрузите релиз**:
    ```bash
-   git clone https://github.com/ваш_пользователь/er-diagram-visualizer.git
+   git clone https://github.com/sartesian/er-diagram-visualizer.git
    cd er-diagram-visualizer
    ```
 
